@@ -12,18 +12,10 @@ const firebaseConfigList = window.firebaseConfigList;
 const firebaseConfigPermissions = window.firebaseConfigPermissions;
 const appId = window.appId;
 
-// --- Initialize Firebase Apps ---
-let appList, dbList, appPermissions, dbPermissions;
-try {
-    appList = initializeApp(firebaseConfigList, 'appList');
-    dbList = getDatabase(appList); // Realtime Database
-    
-    appPermissions = initializeApp(firebaseConfigPermissions, 'appPermissions');
-    dbPermissions = getFirestore(appPermissions); // Firestore Database
-} catch (error) {
-    console.error("Error initializing Firebase:", error);
-    // មិនចាំបាច់ render error ទេ ព្រោះ index.html នឹង handle វា
-}
+// *** dbList និង dbPermissions ត្រូវបានកំណត់នៅក្នុង index.html រួចហើយ ***
+const dbList = window.dbList; 
+const dbPermissions = window.dbPermissions;
+
 
 // Function សម្រាប់ Format ថ្ងៃខែ
 const formatDate = (dateString) => {
@@ -534,69 +526,4 @@ function MainApp({ user, onLogout }) {
             </nav>
         </div>
     );
-}
-
-// --- App (Root Controller) ---
-function App() {
-    const [currentUser, setCurrentUser] = useState(null);
-    const [employees, setEmployees] = useState([]);
-    const [loadingEmployees, setLoadingEmployees] = useState(true);
-
-    // Effect សម្រាប់ Fetch បញ្ជីឈ្មោះ (Firebase 1)
-    useEffect(() => {
-        if (!dbList) return;
-        
-        const namesRef = ref(dbList, 'students'); 
-        
-        const unsubscribe = onValue(namesRef, (snapshot) => {
-            const data = snapshot.val();
-            if (data) {
-                // កែ Key ទាំងអស់ឲ្យត្រូវនឹងទិន្នន័យ
-                const employeeArray = Object.keys(data).map(key => ({
-                    id: key, // នេះជា អត្តលេខ (Pin)
-                    name: data[key].ឈ្មោះ,
-                    photo: data[key].រូបថត,
-                    gender: data[key].ភេទ,
-                    department: data[key].ផ្នែកការងារ,
-                    group: data[key].ក្រុម,
-                    academicYear: data[key].ឆ្នាំសិក្សា,
-                    generation: data[key].ជំនាន់,
-                    role: data[key].តួនាទី,
-                    telegram: data[key].តេឡេក្រាម,
-                    class: data[key].ថា្នក់ // *** នេះជា Key ដែលបានកែថ្មី (ថា្នក់ - ថ្ន-ក្់) ***
-                }));
-                setEmployees(employeeArray);
-            } else {
-                setEmployees([]);
-            }
-            setLoadingEmployees(false);
-        }, (error) => { 
-            console.error("Error fetching names:", error);
-            setLoadingEmployees(false);
-        });
-
-        return () => unsubscribe();
-    }, [dbList]);
-
-    // --- Render Logic ---
-
-    if (loadingEmployees) {
-        return <LoadingScreen />;
-    }
-    
-    if (!currentUser) {
-        // បើមិនទាន់ Login បង្ហាញ LoginScreen
-        return <LoginScreen 
-                    employees={employees} 
-                    onLogin={setCurrentUser} 
-                    loading={loadingEmployees} 
-                />;
-    }
-
-    // បើ Login រួចហើយ បង្ហាញ MainApp
-    // currentUser ឥឡូវនេះផ្ទុកទិន្នន័យទាំងអស់
-    return <MainApp 
-                user={currentUser} 
-                onLogout={() => setCurrentUser(null)} 
-            />;
 }
