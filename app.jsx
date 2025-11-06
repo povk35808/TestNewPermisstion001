@@ -1,0 +1,602 @@
+// នាំចូល React hooks
+const { useState, useEffect, useCallback, useMemo, StrictMode } = React;
+// នាំចូល Firebase functions ពី global window object
+const { 
+    initializeApp, 
+    getDatabase, ref, onValue, // សម្រាប់ Realtime DB (List Name)
+    getFirestore, collection, addDoc, onSnapshot, firestoreServerTimestamp // សម្រាប់ Firestore (Permissions)
+} = window.firebase;
+
+// នាំចូល Configs និង AppId ពី global window object
+const firebaseConfigList = window.firebaseConfigList;
+const firebaseConfigPermissions = window.firebaseConfigPermissions;
+const appId = window.appId;
+
+// --- Initialize Firebase Apps ---
+let appList, dbList, appPermissions, dbPermissions;
+try {
+    appList = initializeApp(firebaseConfigList, 'appList');
+    dbList = getDatabase(appList); // Realtime Database
+    
+    appPermissions = initializeApp(firebaseConfigPermissions, 'appPermissions');
+    dbPermissions = getFirestore(appPermissions); // Firestore Database
+} catch (error) {
+    console.error("Error initializing Firebase:", error);
+    // មិនចាំបាច់ render error ទេ ព្រោះ index.html នឹង handle វា
+}
+
+// Function សម្រាប់ Format ថ្ងៃខែ
+const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    
+    let date;
+    try {
+        if (dateString && typeof dateString.toDate === 'function') {
+            date = dateString.toDate(); 
+        } else {
+            date = new Date(dateString);
+        }
+        if (isNaN(date.getTime())) return dateString; 
+        return date.toLocaleString('km-KH', {
+            day: '2-digit', month: 'short', year: 'numeric',
+            hour: '2-digit', minute: '2-digit', hour12: true
+        });
+    } catch (e) {
+        return dateString; 
+    }
+};
+
+// --- Loading Component ---
+function LoadingScreen() {
+    return (
+        <div className="flex items-center justify-center h-screen bg-gray-100">
+            <div className="text-center">
+                <svg className="w-12 h-12 mx-auto text-blue-600 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p className="mt-2 text-lg font-semibold text-gray-700">កំពុងទាញយកទិន្នន័យ...</p>
+            </div>
+        </div>
+    );
+}
+
+// --- Login Component ---
+function LoginScreen({ employees, onLogin, loading }) {
+    // State សម្រាប់ប្រអប់ Input ឈ្មោះ
+    const [nameInput, setNameInput] = useState(''); 
+    const [pin, setPin] = useState(''); // Pin គឺ អត្តលេខ (ID)
+    const [error, setError] = useState('');
+    const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+    const handleLogin = (e) => {
+        e.preventDefault();
+        setError('');
+        
+        // 1. ស្វែងរកបុគ្គលិកដោយផ្អែកលើឈ្មោះដែលបានវាយ
+        const selectedEmployee = employees.find(emp => emp.name === nameInput);
+
+        if (!nameInput || !pin) {
+            setError('សូមវាយឈ្មោះ និងបញ្ចូលអត្តលេខ');
+            return;
+        }
+        
+        if (!selectedEmployee) {
+            setError('រកឈ្មោះមិនឃើញ. សូមវាយ ឬ ជ្រើសរើសពីបញ្ជី');
+            return;
+        }
+
+        setIsLoggingIn(true);
+
+        // 2. ពិនិត្យមើលថា Pin (អត្តលេខ) ត្រូវគ្នានឹង ID របស់បុគ្គលិក
+        if (selectedEmployee.id === pin) {
+            // ជោគជ័យ
+            // ឥឡូវ onLogin នឹងបញ្ជូនទិន្នន័យបុគ្គលិកទាំងអស់
+            setTimeout(() => onLogin(selectedEmployee), 500); 
+        } else {
+            // បរាជ័យ
+            setTimeout(() => {
+                setError('អត្តលេខ មិនត្រឹមត្រូវ');
+                setIsLoggingIn(false);
+            }, 500);
+        }
+    };
+
+    return (
+        <div className="flex items-center justify-center h-screen bg-gray-100">
+            <div className="w-full max-w-xs p-6 mx-4 bg-white rounded-lg shadow-xl">
+                <h1 className="text-2xl font-bold text-center text-blue-600">ចូលប្រើប្រាស់</h1>
+                <p className="text-sm text-center text-gray-600 mb-6">កម្មវិធីស្នើសុំច្បាប់</p>
+                
+                <form onSubmit={handleLogin} className="space-y-4">
+                    {error && <div className="p-2 text-sm text-center text-red-800 bg-red-100 rounded-md">{error}</div>}
+                    
+                    {/* ប្រអប់ Datalist តែមួយ (Combobox style) */}
+                    <div>
+                        <label htmlFor="employee_name_input" className="block text-sm font-medium text-gray-700">
+                            ឈ្មោះបុគ្គលិក
+                        </label>
+                        <input
+                            type="text"
+                            id="employee_name_input"
+                            list="employee-list" // ភ្ជាប់ទៅ Datalist
+                            value={nameInput}
+                            onChange={(e) => setNameInput(e.target.value)}
+                            className="w-full p-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                            placeholder="វាយ ឬ ជ្រើសរើសឈ្មោះ..."
+                            disabled={loading}
+                        />
+                        {/* Datalist នេះនឹងបង្ហាញជម្រើសពេលវាយ */}
+                        {!loading && (
+                            <datalist id="employee-list">
+                                {employees.map(emp => (
+                                    <option key={emp.id} value={emp.name} />
+                                ))}
+                            </datalist>
+                        )}
+                    </div>
+                    
+                    <div>
+                        <label htmlFor="pin" className="block text-sm font-medium text-gray-700">
+                            អត្តលេខ (PIN)
+                        </label>
+                        <input
+                            type="password" // ប្រើ password type ដើម្បីលាក់លេខ
+                            id="pin"
+                            value={pin}
+                            onChange={(e) => setPin(e.target.value)}
+                            className="w-full p-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                            placeholder="បញ្ចូលអត្តលេខ (ID)..."
+                        />
+                    </div>
+                    
+                    <button
+                        type="submit"
+                        disabled={isLoggingIn || loading}
+                        className={`w-full px-4 py-2 font-semibold text-white rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2
+                            ${isLoggingIn ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'}
+                        `}
+                    >
+                        {isLoggingIn ? 'កំពុងចូល...' : 'ចូល (Login)'}
+                    </button>
+                </form>
+            </div>
+        </div>
+    );
+}
+
+// --- Main App Component (បន្ទាប់ពី Login) ---
+function MainApp({ user, onLogout }) {
+    // State សម្រាប់គ្រប់គ្រង Tabs (បន្ថែម 'account')
+    const [activeTab, setActiveTab] = useState('form'); // 'form', 'list', or 'account'
+
+    // State សម្រាប់ទម្រង់ស្នើសុំ (Form)
+    const [leaveType, setLeaveType] = useState('ឈប់សម្រាក');
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
+    const [reason, setReason] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const [formError, setFormError] = useState('');
+    const [formSuccess, setFormSuccess] = useState('');
+
+    // State សម្រាប់បញ្ជីច្បាប់
+    const [requests, setRequests] = useState([]); // Array of request objects
+    const [loadingRequests, setLoadingRequests] = useState(true);
+    
+    // Effect សម្រាប់ Fetch បញ្ជីច្បាប់ (Firebase 2 - Firestore)
+    useEffect(() => {
+        if (!dbPermissions) return;
+
+        const requestsPath = `artifacts/${appId}/public/data/leave_requests`;
+        const requestsColRef = collection(dbPermissions, requestsPath);
+
+        const unsubscribe = onSnapshot(requestsColRef, (snapshot) => {
+            if (snapshot.empty) {
+                setRequests([]);
+                setLoadingRequests(false);
+                return;
+            }
+            
+            const requestsArray = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            
+            requestsArray.sort((a, b) => {
+                const timeA = a.requestedAt && a.requestedAt.toMillis ? a.requestedAt.toMillis() : 0;
+                const timeB = b.requestedAt && b.requestedAt.toMillis ? b.requestedAt.toMillis() : 0;
+                return timeB - timeA;
+            });
+
+            setRequests(requestsArray);
+            setLoadingRequests(false);
+        }, (error) => {
+            console.error("Error fetching requests (Firestore):", error);
+            setLoadingRequests(false);
+        });
+
+        return () => unsubscribe();
+    }, [dbPermissions]); 
+
+    // Function សម្រាប់ Clear Form
+    const clearForm = () => {
+        setLeaveType('ឈប់សម្រាក');
+        setStartDate('');
+        setEndDate('');
+        setReason('');
+        setFormError('');
+    };
+
+    // Function សម្រាប់ Submit ច្បាប់
+    const handleSubmit = useCallback((e) => {
+        e.preventDefault();
+        setFormError('');
+        setFormSuccess('');
+
+        if (!leaveType || !startDate || !endDate || !reason) {
+            setFormError('សូមបំពេញគ្រប់ប្រអប់');
+            return;
+        }
+
+        setSubmitting(true);
+        
+        // ប្រើ 'user' prop ដែលបានមកពី Login
+        const newRequest = {
+            employeeId: user.id, // Key ថ្មី
+            userId: user.id, // រក្សាទុក Key ចាស់ (userId) សម្រាប់ភាពត្រូវគ្នា
+            name: user.name, 
+            leaveType: leaveType,
+            startDate: startDate,
+            endDate: endDate,
+            reason: reason,
+            status: 'រង់ចាំការយល់ព្រម', // Default status
+            requestedAt: firestoreServerTimestamp() 
+        };
+
+        const requestsPath = `artifacts/${appId}/public/data/leave_requests`;
+        addDoc(collection(dbPermissions, requestsPath), newRequest)
+            .then(() => {
+                setFormSuccess('ការស្នើសុំបានបញ្ជូនដោយជោគជ័យ!');
+                clearForm();
+                setActiveTab('list'); // ប្តូរទៅផ្ទាំងបញ្ជីច្បាប់
+            })
+            .catch((error) => {
+                console.error("Error submitting request:", error);
+                setFormError('មានបញ្ហាក្នុងការបញ្ជូន. សូមព្យាយាមម្តងទៀត.');
+            })
+            .finally(() => {
+                setSubmitting(false);
+            });
+    }, [leaveType, startDate, endDate, reason, user, dbPermissions]); // ឥឡូវប្រើ 'user'
+
+    
+    // --- Render Functions ---
+
+    const renderForm = () => (
+        <form onSubmit={handleSubmit} className="p-4 space-y-4">
+            {formError && <div className="p-3 text-red-800 bg-red-100 rounded-lg">{formError}</div>}
+            {formSuccess && <div className="p-3 text-green-800 bg-green-100 rounded-lg">{formSuccess}</div>}
+            
+            {/* ឥឡូវបង្ហាញឈ្មោះដែល Logged In */}
+            <div>
+                <label className="block text-sm font-medium text-gray-700">
+                    ឈ្មោះបុគ្គលិក
+                </label>
+                <div className="w-full p-2 mt-1 font-semibold text-gray-900 bg-gray-100 border rounded-md">
+                    {user.name} (ID: {user.id})
+                </div>
+            </div>
+            
+            <div>
+                <label className="block text-sm font-medium text-gray-700">ប្រភេទច្បាប់</label>
+                <div className="flex mt-1 space-x-4">
+                    <label className="flex items-center">
+                        <input
+                            type="radio"
+                            value="ឈប់សម្រាក"
+                            checked={leaveType === 'ឈប់សម្រាក'}
+                            onChange={(e) => setLeaveType(e.target.value)}
+                            className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                        />
+                        <span className="ml-2 text-gray-800">ឈប់សម្រាក</span>
+                    </label>
+                    <label className="flex items-center">
+                        <input
+                            type="radio"
+                            value="ចេញក្រៅ"
+                            checked={leaveType === 'ចេញក្រៅ'}
+                            onChange={(e) => setLeaveType(e.target.value)}
+                            className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                        />
+                        <span className="ml-2 text-gray-800">ចេញក្រៅ</span>
+                    </label>
+                </div>
+            </div>
+            
+            <div>
+                <label htmlFor="start_date" className="block text-sm font-medium text-gray-700">
+                    ចាប់ពីថ្ងៃ
+                </label>
+                <input
+                    type={leaveType === 'ឈប់សម្រាក' ? 'date' : 'datetime-local'}
+                    id="start_date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full p-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                />
+            </div>
+            
+            <div>
+                <label htmlFor="end_date" className="block text-sm font-medium text-gray-700">
+                    ដល់ថ្ងៃ
+                </label>
+                <input
+                    type={leaveType === 'ឈប់សម្រាក' ? 'date' : 'datetime-local'}
+                    id="end_date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full p-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                />
+            </div>
+            
+            <div>
+                <label htmlFor="reason" className="block text-sm font-medium text-gray-700">
+                    មូលហេតុ
+                </label>
+                <textarea
+                    id="reason"
+                    rows="4"
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    className="w-full p-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="សូមរៀបរាប់ពីមូលហេតុ..."
+                ></textarea>
+            </div>
+            
+            <button
+                type="submit"
+                disabled={submitting}
+                className={`w-full px-4 py-3 font-semibold text-white rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2
+                    ${submitting ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'}
+                `}
+            >
+                {submitting ? 'កំពុងបញ្ជូន...' : 'បញ្ជូនពាក្យស្នើសុំ'}
+            </button>
+        </form>
+    );
+
+    const renderRequestList = () => {
+        if (loadingRequests) {
+            return <div className="p-4 text-center text-gray-500">កំពុងទាញយកទិន្នន័យ...</div>;
+        }
+        
+        // ពិនិត្យទាំង employeeId (ថ្មី) និង userId (ចាស់)
+        const myRequests = requests.filter(req => 
+            req.employeeId === user.id || req.userId === user.id
+        );
+        
+        if (myRequests.length === 0) {
+            return <div className="p-4 text-center text-gray-500">អ្នកមិនទាន់មានការស្នើសុំនៅឡើយ</div>;
+        }
+        
+        return (
+            <div className="p-2 space-y-3 md:p-4">
+                {myRequests.map(req => (
+                    <div key={req.id} className="p-4 bg-white rounded-lg shadow-md border border-gray-200">
+                        <div className="flex items-center justify-between pb-2 mb-2 border-b">
+                            {/* ប្រើ req.name ព្រោះយើងបានកែពេល Submit */}
+                            <h3 className="font-semibold text-gray-900">{req.name}</h3>
+                            <span 
+                                className={`px-2 py-0.5 text-xs font-medium rounded-full
+                                    ${req.status === 'រង់ចាំការយល់ព្រម' ? 'bg-yellow-100 text-yellow-800' : ''}
+                                    ${req.status === 'បានយល់ព្រម' || req.status === 'approved' ? 'bg-green-100 text-green-800' : ''}
+                                    ${req.status === 'បានបដិសេធ' ? 'bg-red-100 text-red-800' : ''}
+                                `}
+                            >
+                                {/* កែ 'approved' ទៅជា 'បានយល់ព្រម' សម្រាប់បង្ហាញ */}
+                                {req.status === 'approved' ? 'បានយល់ព្រម' : req.status}
+                            </span>
+                        </div>
+                        <div className="space-y-1 text-sm text-gray-700">
+                            <p><strong>ប្រភេទ:</strong> {req.leaveType}</p>
+                            <p><strong>ចាប់ពី:</strong> {formatDate(req.startDate)}</p>
+                            <p><strong>ដល់:</strong> {formatDate(req.endDate)}</p>
+                            <p><strong>មូលហេតុ:</strong> {req.reason}</p>
+                            <p className="pt-1 mt-1 text-xs text-gray-500 border-t">
+                                បានស្នើសុំនៅ: {formatDate(req.requestedAt)}
+                            </p>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    };
+
+    // *** Page គណនី ***
+    const renderAccountPage = () => {
+        // Helper component សម្រាប់បង្ហាញព័ត៌មាននីមួយៗ
+        const InfoRow = ({ label, value }) => (
+            <div className="flex justify-between py-3 border-b border-gray-200">
+                <span className="text-sm font-medium text-gray-500">{label}</span>
+                <span className="text-sm font-semibold text-gray-900 text-right">{value || 'N/A'}</span>
+            </div>
+        );
+
+        return (
+            <div className="p-4">
+                {/* Profile Header */}
+                <div className="flex flex-col items-center p-4 mb-4 bg-white rounded-lg shadow-md">
+                    <img
+                        src={user.photo || 'https://placehold.co/100x100/EBF8FF/3182CE?text=?'}
+                        alt="រូបថត Profile"
+                        className="w-24 h-24 rounded-full border-4 border-blue-200 shadow-lg object-cover"
+                        // ក្នុងករណីរូបថត Error
+                        onError={(e) => { e.target.onerror = null; e.target.src = 'https://placehold.co/100x100/EBF8FF/3182CE?text=?'; }}
+                    />
+                    <h2 className="mt-3 text-xl font-bold text-gray-900">{user.name}</h2>
+                    <p className="text-sm text-gray-600">{user.department || 'បុគ្គលិក'}</p>
+                </div>
+
+                {/* ព័ត៌មានលម្អិត */}
+                <div className="p-4 bg-white rounded-lg shadow-md">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-2 border-b pb-2">ព័ត៌មានលម្អិត</h3>
+                    <div className="space-y-2">
+                        <InfoRow label="អត្តលេខ (ID)" value={user.id} />
+                        <InfoRow label="ភេទ" value={user.gender} />
+                        <InfoRow label="ផ្នែកការងារ" value={user.department} />
+                        <InfoRow label="ក្រុម" value={user.group} />
+                        <InfoRow label="ថ្នាក់" value={user.class} /> {/* Key ថ្មីដែលបានកែ */}
+                        <InfoRow label="ជំនាន់" value={user.generation} />
+                        <InfoRow label="ឆ្នាំសិក្សា" value={user.academicYear} />
+                        <InfoRow label="តេឡេក្រាម" value={user.telegram} />
+                    </div>
+                </div>
+                
+                {/* ប៊ូតុង Logout ត្រូវបានផ្លាស់មកទីនេះ */}
+                <button
+                    onClick={onLogout}
+                    className="w-full mt-6 px-4 py-3 font-semibold text-white bg-red-500 rounded-lg shadow-md hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition-colors"
+                >
+                    ចាកចេញពីគណនី
+                </button>
+            </div>
+        );
+    };
+
+    // Function សម្រាប់បង្ហាញ Page ផ្អែកលើ activeTab
+    const renderActivePage = () => {
+        switch(activeTab) {
+            case 'form':
+                return renderForm();
+            case 'list':
+                return renderRequestList();
+            case 'account':
+                return renderAccountPage();
+            default:
+                return renderForm();
+        }
+    };
+
+    // --- Main JSX Return ---
+    return (
+        <div className="max-w-md mx-auto h-screen bg-white shadow-xl flex flex-col">
+            {/* Header */}
+            <header className="w-full p-4 text-xl font-bold text-center text-white bg-blue-600 shadow-md flex justify-center items-center">
+                <span>កម្មវិធីស្នើសុំច្បាប់</span>
+            </header>
+            
+            {/* Content (Scrollable) */}
+            <main className="flex-1 overflow-y-auto bg-gray-50 no-scrollbar pb-16">
+                {/* បានបន្ថែម pb-16 (padding-bottom) ដើម្បីកុំឲ្យខ្លឹមសារចុងក្រោយ លិចក្រោម Footer Bar */}
+                {renderActivePage()}
+            </main>
+
+            {/* *** Footer Navigation Bar *** */}
+            <nav className="flex justify-around p-2 bg-white border-t border-gray-200 shadow-[0_-2px_5px_rgba(0,0,0,0.05)] w-full max-w-md fixed bottom-0">
+                {/* ប៊ូតុង ស្នើសុំ */}
+                <button
+                    onClick={() => setActiveTab('form')}
+                    className={`flex flex-col items-center justify-center w-1/3 p-2 rounded-lg transition-colors
+                        ${activeTab === 'form' ? 'text-blue-600' : 'text-gray-500 hover:text-blue-500'}
+                    `}
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <span className="text-xs font-medium">ស្នើសុំ</span>
+                </button>
+                
+                {/* ប៊ូតុង បញ្ជីច្បាប់ */}
+                <button
+                    onClick={() => setActiveTab('list')}
+                    className={`flex flex-col items-center justify-center w-1/3 p-2 rounded-lg transition-colors
+                        ${activeTab === 'list' ? 'text-blue-600' : 'text-gray-500 hover:text-blue-500'}
+                    `}
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                    </svg>
+                    <span className="text-xs font-medium">បញ្ជីច្បាប់</span>
+                </button>
+                
+                {/* ប៊ូតុង គណនី */}
+                <button
+                    onClick={() => setActiveTab('account')}
+                    className={`flex flex-col items-center justify-center w-1/3 p-2 rounded-lg transition-colors
+                        ${activeTab === 'account' ? 'text-blue-600' : 'text-gray-500 hover:text-blue-500'}
+                    `}
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    <span className="text-xs font-medium">គណនី</span>
+                </button>
+            </nav>
+        </div>
+    );
+}
+
+// --- App (Root Controller) ---
+function App() {
+    const [currentUser, setCurrentUser] = useState(null);
+    const [employees, setEmployees] = useState([]);
+    const [loadingEmployees, setLoadingEmployees] = useState(true);
+
+    // Effect សម្រាប់ Fetch បញ្ជីឈ្មោះ (Firebase 1)
+    useEffect(() => {
+        if (!dbList) return;
+        
+        const namesRef = ref(dbList, 'students'); 
+        
+        const unsubscribe = onValue(namesRef, (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                // កែ Key ទាំងអស់ឲ្យត្រូវនឹងទិន្នន័យ
+                const employeeArray = Object.keys(data).map(key => ({
+                    id: key, // នេះជា អត្តលេខ (Pin)
+                    name: data[key].ឈ្មោះ,
+                    photo: data[key].រូបថត,
+                    gender: data[key].ភេទ,
+                    department: data[key].ផ្នែកការងារ,
+                    group: data[key].ក្រុម,
+                    academicYear: data[key].ឆ្នាំសិក្សា,
+                    generation: data[key].ជំនាន់,
+                    role: data[key].តួនាទី,
+                    telegram: data[key].តេឡេក្រាម,
+                    class: data[key].ថា្នក់ // *** នេះជា Key ដែលបានកែថ្មី (ថា្នក់ - ថ្ន-ក្់) ***
+                }));
+                setEmployees(employeeArray);
+            } else {
+                setEmployees([]);
+            }
+            setLoadingEmployees(false);
+        }, (error) => { 
+            console.error("Error fetching names:", error);
+            setLoadingEmployees(false);
+        });
+
+        return () => unsubscribe();
+    }, [dbList]);
+
+    // --- Render Logic ---
+
+    if (loadingEmployees) {
+        return <LoadingScreen />;
+    }
+    
+    if (!currentUser) {
+        // បើមិនទាន់ Login បង្ហាញ LoginScreen
+        return <LoginScreen 
+                    employees={employees} 
+                    onLogin={setCurrentUser} 
+                    loading={loadingEmployees} 
+                />;
+    }
+
+    // បើ Login រួចហើយ បង្ហាញ MainApp
+    // currentUser ឥឡូវនេះផ្ទុកទិន្នន័យទាំងអស់
+    return <MainApp 
+                user={currentUser} 
+                onLogout={() => setCurrentUser(null)} 
+            />;
+}
