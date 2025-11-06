@@ -27,7 +27,7 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- 3. ផ្ទុក Firebase SDKs (v9 Modular) -->
+    <!-- 3. ផ្ទុក Firebase SDKs (v9 Modular) និង Initialization Logic (Sync/Async Setup) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
         // SDK សម្រាប់ Database 1 (dilistname)
@@ -78,8 +78,20 @@
             databaseURL: "https://dipermisstion-default-rtdb.firebaseio.com"
         };
         
-        // បង្ខំឲ្យប្រើ 'default-app-id' ដើម្បីឲ្យត្រូវនឹងទិន្នន័យចាស់
+        // បង្ខំឲ្យប្រើ 'default-app-id'
         window.appId = 'default-app-id';
+        
+        // --- Initialize Firebase Apps (ថ្មី៖ ធ្វើនៅទីនេះ) ---
+        // កំណត់ dbList និង dbPermissions ទៅកាន់ window ផ្ទាល់
+        try {
+            const appList = initializeApp(window.firebaseConfigList, 'appList');
+            window.dbList = getDatabase(appList); // Realtime Database
+            
+            const appPermissions = initializeApp(window.firebaseConfigPermissions, 'appPermissions');
+            window.dbPermissions = getFirestore(appPermissions); // Firestore Database
+        } catch (error) {
+            console.error("Error initializing Firebase:", error);
+        }
 
     </script>
 </head>
@@ -93,21 +105,89 @@
 
     <!-- 5. Script សម្រាប់ដំណើរការកម្មវិធី (Bootstrapping) -->
     <script type="text/babel">
-        const { StrictMode } = React;
+        const { useState, useEffect, StrictMode } = React;
         
-        // Render the App
-        // យើងសន្មត់ថា App function ត្រូវបានកំណត់នៅក្នុង app.jsx ហើយ
-        window.onload = function() {
-            if (typeof App !== 'undefined') {
-                const root = ReactDOM.createRoot(document.getElementById('root'));
-                root.render(
-                    <StrictMode>
-                        <App />
-                    </StrictMode>
-                );
-            } else {
-                console.error("App component not found. Check app.jsx loading.");
+        
+        // --- App (Root Controller) ---
+        function App() {
+            const [currentUser, setCurrentUser] = useState(null);
+            const [employees, setEmployees] = useState([]);
+            const [loadingEmployees, setLoadingEmployees] = useState(true);
+
+            // Effect សម្រាប់ Fetch បញ្ជីឈ្មោះ (Firebase 1)
+            useEffect(() => {
+                // ប្រើ window.dbList ដែលកំណត់នៅក្នុង module script ខាងលើ
+                const dbListInstance = window.dbList; 
+                if (!dbListInstance || !window.firebase) {
+                    console.error("dbList or window.firebase is not initialized.");
+                    setLoadingEmployees(false);
+                    return;
+                }
+                
+                const namesRef = window.firebase.ref(dbListInstance, 'students'); 
+                
+                const unsubscribe = window.firebase.onValue(namesRef, (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        // កែ Key ទាំងអស់ឲ្យត្រូវនឹងទិន្នន័យ
+                        const employeeArray = Object.keys(data).map(key => ({
+                            id: key, // នេះជា អត្តលេខ (Pin)
+                            name: data[key].ឈ្មោះ,
+                            photo: data[key].រូបថត,
+                            gender: data[key].ភេទ,
+                            department: data[key].ផ្នែកការងារ,
+                            group: data[key].ក្រុម,
+                            academicYear: data[key].ឆ្នាំសិក្សា,
+                            generation: data[key].ជំនាន់,
+                            role: data[key].តួនាទី,
+                            telegram: data[key].តេឡេក្រាម,
+                            class: data[key].ថា្នក់ // *** នេះជា Key ដែលបានកែថ្មី (ថា្នក់ - ថ្ន-ក្់) ***
+                        }));
+                        setEmployees(employeeArray);
+                    } else {
+                        setEmployees([]);
+                    }
+                    setLoadingEmployees(false);
+                }, (error) => { 
+                    console.error("Error fetching names:", error);
+                    setLoadingEmployees(false);
+                });
+
+                return () => unsubscribe();
+            }, []); // យក dbList ចេញពី dependency array ព្រោះវាជា global instance
+
+            // --- Render Logic ---
+
+            if (loadingEmployees) {
+                return <LoadingScreen />;
             }
+            
+            if (!currentUser) {
+                // បើមិនទាន់ Login បង្ហាញ LoginScreen
+                return <LoginScreen 
+                            employees={employees} 
+                            onLogin={setCurrentUser} 
+                            loading={loadingEmployees} 
+                        />;
+            }
+
+            // បើ Login រួចហើយ បង្ហាញ MainApp
+            // currentUser ឥឡូវនេះផ្ទុកទិន្នន័យទាំងអស់
+            return <MainApp 
+                        user={currentUser} 
+                        onLogout={() => setCurrentUser(null)} 
+                    />;
+        }
+
+
+        // Render the App
+        window.onload = function() {
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(
+                <StrictMode>
+                    <App />
+                </StrictMode>
+            );
         };
     </script>
 
